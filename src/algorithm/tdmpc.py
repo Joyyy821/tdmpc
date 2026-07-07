@@ -15,6 +15,7 @@ class TOLD(nn.Module):
 		self._reward = h.mlp(cfg.latent_dim+cfg.action_dim, cfg.mlp_dim, 1)
 		self._pi = h.mlp(cfg.latent_dim, cfg.mlp_dim, cfg.action_dim)
 		self._Q1, self._Q2 = h.q(cfg), h.q(cfg)
+		self._state_head = h.mlp(cfg.latent_dim, cfg.mlp_dim, cfg.state_dim) if hasattr(cfg, 'state_dim') else None
 		self.apply(h.orthogonal_init)
 		for m in [self._reward, self._Q1, self._Q2]:
 			m[-1].weight.data.fill_(0)
@@ -33,6 +34,18 @@ class TOLD(nn.Module):
 		"""Predicts next latent state (d) and single-step reward (R)."""
 		x = torch.cat([z, a], dim=-1)
 		return self._dynamics(x), self._reward(x)
+
+	def predict_state(self, z):
+		"""Predict physical state from latent state for supervised diagnostics."""
+		if self._state_head is None:
+			raise AttributeError('TOLD was constructed without cfg.state_dim; no state head exists.')
+		pred = self._state_head(z)
+		trig = pred[..., :2]
+		norm = torch.linalg.norm(trig, dim=-1, keepdim=True)
+		fallback = torch.zeros_like(trig)
+		fallback[..., 0] = 1.0
+		trig = torch.where(norm > 1e-6, trig / torch.clamp(norm, min=1e-6), fallback)
+		return torch.cat([trig, pred[..., 2:]], dim=-1)
 
 	def pi(self, z, std=0):
 		"""Samples an action from the learned policy (pi)."""
