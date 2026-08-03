@@ -15,7 +15,7 @@ class TOLD(nn.Module):
 		self._reward = h.mlp(cfg.latent_dim+cfg.action_dim, cfg.mlp_dim, 1)
 		self._pi = h.mlp(cfg.latent_dim, cfg.mlp_dim, cfg.action_dim)
 		self._Q1, self._Q2 = h.q(cfg), h.q(cfg)
-		self._state_head = h.mlp(cfg.latent_dim, cfg.mlp_dim, cfg.state_dim) if hasattr(cfg, 'state_dim') else None
+		self._state_head = _state_head(cfg) if hasattr(cfg, 'state_dim') else None
 		self.apply(h.orthogonal_init)
 		for m in [self._reward, self._Q1, self._Q2]:
 			m[-1].weight.data.fill_(0)
@@ -59,6 +59,22 @@ class TOLD(nn.Module):
 		"""Predict state-action value (Q)."""
 		x = torch.cat([z, a], dim=-1)
 		return self._Q1(x), self._Q2(x)
+
+
+def _state_head(cfg):
+	"""Returns the supervised pendulum state prediction head."""
+	head_type = str(getattr(cfg, 'state_head_type', 'tdmpc_mlp'))
+	if head_type == 'tdmpc_mlp':
+		return h.mlp(cfg.latent_dim, cfg.mlp_dim, cfg.state_dim)
+	if head_type == 'encoder_symmetric':
+		return nn.Sequential(
+			nn.Linear(cfg.latent_dim, cfg.enc_dim), nn.ELU(),
+			nn.Linear(cfg.enc_dim, cfg.state_dim))
+	if head_type == 'linear':
+		return nn.Sequential(nn.Linear(cfg.latent_dim, cfg.state_dim))
+	raise ValueError(
+		f"Unknown state_head_type {head_type!r}. "
+		"Expected one of: 'tdmpc_mlp', 'encoder_symmetric', 'linear'.")
 
 
 class TDMPC():
