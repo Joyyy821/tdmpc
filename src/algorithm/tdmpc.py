@@ -15,7 +15,8 @@ class TOLD(nn.Module):
 		self._reward = h.mlp(cfg.latent_dim+cfg.action_dim, cfg.mlp_dim, 1)
 		self._pi = h.mlp(cfg.latent_dim, cfg.mlp_dim, cfg.action_dim)
 		self._Q1, self._Q2 = h.q(cfg), h.q(cfg)
-		self._state_head = _state_head(cfg) if hasattr(cfg, 'state_dim') else None
+		self._state_head = _state_head(cfg) if hasattr(cfg, 'state_dim') and not getattr(cfg, 'image_output', False) else None
+		self._image_head = h.image_decoder(cfg) if getattr(cfg, 'image_output', False) else None
 		self.apply(h.orthogonal_init)
 		for m in [self._reward, self._Q1, self._Q2]:
 			m[-1].weight.data.fill_(0)
@@ -46,6 +47,12 @@ class TOLD(nn.Module):
 		fallback[..., 0] = 1.0
 		trig = torch.where(norm > 1e-6, trig / torch.clamp(norm, min=1e-6), fallback)
 		return torch.cat([trig, pred[..., 2:]], dim=-1)
+
+	def predict_image(self, z):
+		"""Decode an RGB next-frame prediction from a latent state."""
+		if self._image_head is None:
+			raise AttributeError('TOLD was constructed without cfg.image_output; no image head exists.')
+		return self._image_head(z)
 
 	def pi(self, z, std=0):
 		"""Samples an action from the learned policy (pi)."""

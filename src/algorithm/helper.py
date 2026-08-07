@@ -112,6 +112,50 @@ def enc(cfg):
 	return nn.Sequential(*layers)
 
 
+
+def _conv_output_size(size, kernel, stride):
+	"""Return the no-padding convolution output size used by the pixel encoder."""
+	return (size - kernel) // stride + 1
+
+
+class _ImageDecoder(nn.Module):
+	"""Transpose-convolution decoder symmetric to TD-MPC's pixel encoder."""
+	def __init__(self, cfg):
+		super().__init__()
+		self.num_channels = int(cfg.num_channels)
+		sizes = [int(cfg.img_size)]
+		for kernel in [7, 5, 3, 3]:
+			sizes.append(_conv_output_size(sizes[-1], kernel, 2))
+		if sizes[-1] <= 0:
+			raise ValueError(f'img_size={cfg.img_size} is too small for TD-MPC pixel encoder.')
+		self.spatial_size = sizes[-1]
+		self.project = nn.Linear(cfg.latent_dim, self.num_channels * self.spatial_size * self.spatial_size)
+		layers = []
+		current = self.spatial_size
+		for index, (target, kernel) in enumerate(zip(reversed(sizes[:-1]), [3, 3, 5, 7])):
+			base = (current - 1) * 2 + kernel
+			output_padding = target - base
+			if output_padding not in {0, 1}:
+				raise ValueError(f'img_size={cfg.img_size} cannot be inverted by TD-MPC decoder.')
+			out_channels = 3 if index == 3 else self.num_channels
+			layers.append(nn.ConvTranspose2d(self.num_channels, out_channels, kernel, stride=2, output_padding=output_padding))
+			layers.append(nn.ReLU())
+			current = target
+		layers[-1] = nn.Sigmoid()
+		self.decoder = nn.Sequential(*layers)
+
+	def forward(self, z):
+		x = self.project(z)
+		x = x.view(z.shape[0], self.num_channels, self.spatial_size, self.spatial_size)
+		return self.decoder(x)
+
+
+def image_decoder(cfg):
+	"""Return an RGB decoder symmetric to TD-MPC's pixel encoder."""
+	if cfg.modality != 'pixels':
+		raise ValueError('image_decoder requires cfg.modality == pixels.')
+	return _ImageDecoder(cfg)
+
 def mlp(in_dim, mlp_dim, out_dim, act_fn=nn.ELU()):
 	"""Returns an MLP."""
 	if isinstance(mlp_dim, int):
